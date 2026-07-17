@@ -2,7 +2,7 @@
 
 **Owner:** Dafna Elkayam
 **Status:** Draft v1
-**Last updated:** 2026-07-17
+**Last updated:** 2026-07-17 (rev 2 — dashboards, per-model cost, filters)
 
 ---
 
@@ -63,6 +63,7 @@ A supporting audit trail is also missing, which will block the org's SOC 2 contr
   - **Manager** (team lead) — access scoped to their reports (derived from IdP manager attribute) and any teams they explicitly own.
   - **Finance viewer** — read-only access to cost and utilization dashboards, no PII beyond seat holder name/team.
 - Manager-to-report mapping comes from the IdP; the system does not maintain its own org chart.
+- Group sync: Active Directory security groups (synced to the IdP, e.g. via Entra ID/Okta) are pulled in via the same SCIM feed and mirrored as filterable groups, preserving the org structure (department, team, cost center) already defined in AD.
 
 ### 6.2 Request & approval flow
 
@@ -82,23 +83,35 @@ A supporting audit trail is also missing, which will block the org's SOC 2 contr
 - Admins take action per seat: **Revoke**, **Keep (30 days)**, or **Keep (90 days)**. All three actions are logged and reset the flag as appropriate.
 - v1 does **not** auto-revoke and does **not** notify the seat holder — this is an admin-only workflow to avoid annoying legitimate but sporadic users while trust in the signal is built.
 
-### 6.4 Analytics & reporting
+### 6.4 Dashboards & analytics
+
+#### Manager / Team Lead dashboard
+
+- Landing view scoped automatically to the signed-in manager's reports (direct + indirect, from the IdP org chart) plus any teams they explicitly own.
+- Summary tiles: total seats, active vs. idle, monthly cost, average acceptance rate.
+- Team roster table: one row per person — seat status, last-active date, acceptance rate, monthly cost — with drill-down into that person's usage detail (below).
+- Same dashboard shell serves IT admins (org-wide, unscoped) and finance (team-level aggregates, no per-user drill-down — see 6.1 role model).
+
+#### Per-user usage detail
+
+- Selectable window (7 / 30 / 90 days).
+- Total suggestions shown / accepted, acceptance rate.
+- Language breakdown of accepted suggestions.
+- Active days in the window.
+- **Model breakdown:** usage split by the underlying AI model selected within Copilot (e.g. GPT-4.1, Claude Sonnet, Gemini, o-series), each row showing request count, premium-request credits consumed, and cost attributed to that model for the period.
+- Visible **only** to the user's manager chain and to IT admins. Finance sees team-level cost aggregates only, never a named individual's usage detail.
+
+#### Filters (all dashboard/table views)
+
+- **User ID:** exact-match lookup to jump straight to one person's roster row or usage detail. Admins can look up anyone; managers are restricted to users within their own scope (6.1).
+- **Group (AD / IdP):** filter by any security group or org unit synced from Active Directory via the IdP (department, cost center, team — see 6.1). Multi-select, combinable with the User ID filter, with the option to save a filter combination as a default view.
 
 #### Cost / chargeback (finance view)
 
-- Monthly Copilot spend per team, per cost center, per manager.
+- Monthly Copilot spend per team, per cost center, per manager, rolling up from the same per-model cost data used in the per-user detail view so team totals and individual drill-downs always reconcile.
 - Trendline of active vs. idle seats over the last 12 months.
 - CSV export for finance systems.
 - Seat cost is configurable (default: current GitHub Copilot Business list price); the tool does not read invoices from GitHub Billing in v1.
-
-#### Productivity signals (manager view)
-
-- Per-team and per-user, over a selectable window (7 / 30 / 90 days):
-  - Suggestion acceptance rate (% of Copilot suggestions accepted).
-  - Total suggestions shown / accepted.
-  - Language breakdown of accepted suggestions.
-  - Active days in the window.
-- All per-user views are visible **only** to the user's manager chain and to IT admins. Finance sees team-level aggregates only.
 
 ### 6.5 Audit log
 
@@ -131,7 +144,7 @@ A supporting audit trail is also missing, which will block the org's SOC 2 contr
 |---|---|---|
 | Corporate IdP (Okta / Entra ID / Google) | SSO + SCIM user/manager sync | Inbound |
 | GitHub Copilot admin API | Assign / revoke seats, list seats | Outbound |
-| GitHub Copilot usage API | Pull per-user activity & acceptance signals | Inbound |
+| GitHub Copilot usage / metrics API | Pull per-user activity, acceptance signals, and per-model request/premium-credit breakdown | Inbound |
 | Corporate SMTP / transactional email | Notifications | Outbound |
 
 ## 9. Success metrics
@@ -161,13 +174,15 @@ You asked for a phasing recommendation. Given the scope, a three-phase rollout i
 - Nightly Copilot usage ingestion.
 - Idle-seat view (30-day rule, admin actions).
 - Cost / chargeback dashboard for finance.
-- Team-level utilization dashboard for managers.
+- Manager / Team Lead dashboard: team roster, utilization, and cost tiles.
+- User ID and AD/group filters across dashboard and table views.
 
-**Exit criteria:** finance can produce a monthly chargeback report from the tool alone.
+**Exit criteria:** finance can produce a monthly chargeback report and a manager can see their team's utilization, from the tool alone.
 
 ### Phase 3 — Insight (weeks 13–18)
 
 - Per-user productivity signals (acceptance rate, language breakdown) for managers.
+- Per-user, per-model usage and cost/credit breakdown (pending validation of API support — open question 7).
 - Weekly digests (pending approvals, idle seats).
 - Historical trend views (12-month).
 - SOC 2 evidence-pack export.
@@ -184,6 +199,8 @@ Total: ~18 weeks to full v1. MVP is usable at week 6.
 4. **Contractor accounts.** How are contractors identified in the IdP, and do they follow the same manager approval flow or a different one (e.g. sponsor)?
 5. **Denial appeal.** If a manager denies a request, should the developer be able to escalate, or is denial final?
 6. **Idle threshold trust.** Is 30 days the right initial threshold, or start looser (e.g. 45 days) and tighten once we see real activity data?
+7. **Per-model cost API availability.** Does GitHub's Copilot usage/metrics API expose per-user, per-model request counts and premium-request multipliers, or only org/enterprise-level aggregates? If only aggregate data is available, per-user model cost in 6.4 will need to be estimated (e.g. allocated by team-level model mix) rather than sourced exactly — needs validation against the GitHub Enterprise Cloud Copilot Metrics API before committing to the Phase 3 date.
+8. **AD group depth.** How many levels of AD/IdP groups do we need to support for filtering (e.g. just team and department, or arbitrary nested org units)? Deep nesting adds UI and sync complexity.
 
 ## 12. Out of scope for v1 (revisit later)
 
