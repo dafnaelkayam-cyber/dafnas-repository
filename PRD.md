@@ -2,7 +2,7 @@
 
 **Owner:** Dafna Elkayam
 **Status:** Draft v1
-**Last updated:** 2026-07-17 (rev 4 — API-validated: per-model request counts are hard data, cost is a per-user total only, no model-level cost estimate)
+**Last updated:** 2026-07-17 (rev 5 — first MVP defined: per-user daily use + cost signal, filter by User only)
 
 ---
 
@@ -70,6 +70,28 @@ A custom in-house web application that gives engineering managers and finance da
 > - ❌ Per-user, per-model **credits/cost** — does not exist in the API. Not being estimated (decided 2026-07-17) — the cost dashboard uses the per-user total instead (§6.2.5).
 > - ❌ Extensions/skillsets and custom/MCP agent usage — no signal in the API today.
 > - ⚠️ Group filtering requires AD groups to be synced to **GitHub Teams** via IdP team sync (org-level prerequisite) plus joining a separate `user-teams-1-day` report ourselves — GitHub does not provide one pre-built team-scoped endpoint.
+
+#### 6.2.0 First MVP — daily use & cost signal
+
+The very first release ships the smallest useful slice: enough for a manager to answer "is this person using Copilot every day, and is their spend under control" — one user at a time.
+
+**Daily-use metrics per user:**
+- Active / inactive per day — presence in the API's daily per-user report, no extra computation needed.
+- Adoption phase (`ai_adoption_phase`) — GitHub's own cohort classification (e.g. new / engaged / at-risk), surfaced as-is instead of building custom thresholds.
+- Feature-used flags per day: completions, chat, CLI, coding agent, code review (`used_*` fields).
+
+**Cost metrics per user:**
+- Daily and 28-day-rolling `ai_credits_used` total, trended over time.
+- Model mix: request count per LLM model (`totals_by_model[]`) — a cost-coaching signal (frontier models cost more per request) even without exact per-model dollars.
+- Trend against the org's monthly AI-credit allowance, to flag a user approaching their cap before overage.
+
+**Filter:** **User only** in this first release — type-ahead search, one or more users, scoped to the manager's own reports (admins unscoped). Group and LLM-model filters, saved views, and the cost drill-down dashboard (§6.2.1–§6.2.5 below) follow once this ships. Decoupling Group filtering from the MVP also avoids the GitHub Team/IdP-sync prerequisite blocking the first release.
+
+**Exit criteria:** a manager can search for any one of their reports and see, for a selected date range: active/inactive per day, adoption phase, which features they used, their credit trend, and their model mix.
+
+---
+
+The rest of §6.2 describes the fuller dashboard this MVP grows into (team rosters, Group/LLM-model filters, saved views, drill-down cost view) — see phasing in §10.
 
 #### 6.2.1 Manager / Team Lead dashboard
 
@@ -168,19 +190,27 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 
 ## 10. Recommended phasing
 
-### Phase 1 — Usage & Cost Visibility (MVP)
+### Phase 1 — First MVP: daily use & cost signal (§6.2.0)
 
-- SSO sign-in + SCIM sync (users, managers, groups).
+- SSO sign-in + SCIM sync (users, managers — group sync not required yet).
 - Daily usage ingestion from GitHub's Copilot usage/metrics API.
-- Manager/Team Lead dashboard with daily per-user roster (§6.2.1).
-- Filters: Users, Group, LLM model (§6.2.2) + saved filters (§6.2.3).
-- Feature/skill/agent usage view (§6.2.4).
-- Cost dashboard with team → individual → model drill-down (§6.2.5).
-- Basic audit log (access + saved-view events).
+- Per-user search + detail view: active/inactive per day, adoption phase, feature-used flags, credit trend, model mix.
+- Filter by **User** only.
+- Basic audit log (access events).
 
-**Exit criteria:** a manager can open the tool, apply a saved filter, and see daily usage, feature adoption, and cost drill-down for their team without leaving the dashboard.
+**Exit criteria:** see §6.2.0's exit criteria — a manager can look up any one report and see their daily activity, adoption phase, feature usage, and cost/model trend.
 
-### Phase 2 — Seat Management (deferred scope)
+### Phase 2 — Full usage & cost dashboards
+
+- Manager/Team Lead roster dashboard, team-wide (§6.2.1).
+- Group and LLM-model filters, saved filter views (§6.2.2, §6.2.3).
+- Model & feature usage rollups at team level (§6.2.4).
+- Cost dashboard with team → individual drill-down (§6.2.5).
+- Resolve the GitHub Team/IdP-sync prerequisite for Group filtering (§6.1) — an org-side dependency, flag early.
+
+**Exit criteria:** a manager can open the tool, apply a saved filter, and see daily usage, feature adoption, and cost drill-down for their whole team without leaving the dashboard.
+
+### Phase 3 — Seat Management (deferred scope)
 
 - Self-service request form.
 - Two-step approval (manager → IT admin).
@@ -189,7 +219,7 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 
 **Exit criteria:** every new Copilot seat in the org is granted through the tool; idle seats surface to admins.
 
-### Phase 3 — Governance & Scale
+### Phase 4 — Governance & Scale
 
 - Weekly digests (usage summaries, idle seats, approvals).
 - Historical trend views (12-month).
