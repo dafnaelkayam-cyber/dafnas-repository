@@ -2,7 +2,7 @@
 
 **Owner:** Dafna Elkayam
 **Status:** Draft v1
-**Last updated:** 2026-07-17 (rev 3 — usage/cost visibility is now v1; seat management deferred)
+**Last updated:** 2026-07-17 (rev 4 — API-validated: per-model request counts are hard data, cost is a per-user total only, no model-level cost estimate)
 
 ---
 
@@ -59,11 +59,17 @@ A custom in-house web application that gives engineering managers and finance da
   - **Manager** (team lead) — access scoped to their reports (derived from IdP manager attribute) and any teams they explicitly own.
   - **Finance viewer** — cost dashboard only, team-level aggregates, no per-user usage/feature detail.
 - Manager-to-report mapping comes from the IdP; the system does not maintain its own org chart.
-- Group sync: Active Directory security groups (synced to the IdP, e.g. via Entra ID/Okta) are pulled in via the same SCIM feed and mirrored as filterable groups, preserving the org structure (department, team, cost center) already defined in AD.
+- Group sync: for the **Group filter** (§6.2.2) to work against Copilot usage data, the relevant AD security groups must be synced to **GitHub Teams** via IdP team sync (a separate, org-level GitHub Enterprise feature — up to 5 IdP groups per team, one-way from the IdP, hourly refresh). This is a setup prerequisite, not something this tool configures. Our backend joins GitHub's `user-teams-1-day` report against the per-user usage report to resolve team/group membership per day, since GitHub does not provide a single pre-aggregated team-scoped usage endpoint.
 
 ### 6.2 Usage & cost dashboards (core of v1)
 
-> **Key dependency:** everything in this section depends on GitHub's Copilot usage/metrics telemetry being available at daily, per-user granularity — including per-model and per-feature/agent breakdown. This needs to be validated against the GitHub Enterprise Cloud Copilot Metrics API before development starts; see [open question 1](#7-open-questions). Some fields (notably per-model cost and agent/skill-level usage) may only be available in aggregate today and would need to be estimated or descoped until GitHub's API matures.
+> **API validation (done — 2026-07-17):** confirmed against GitHub's current Copilot usage metrics API (`users-1-day` / `users-28-day` reports).
+> - ✅ Daily, per-user data — real, ~2-day reporting lag after a day closes.
+> - ✅ Per-user, per-model **request counts** — real (`totals_by_model[]` breakdown, confirmed for chat; coding agent/CLI model attribution to be confirmed during implementation).
+> - ✅ Per-user **total** AI credits (`ai_credits_used`) — real, but a single daily total, **not** split by model. GitHub's own docs label it "a metrics signal for analyzing consumption, not a billed total."
+> - ❌ Per-user, per-model **credits/cost** — does not exist in the API. Not being estimated (decided 2026-07-17) — the cost dashboard uses the per-user total instead (§6.2.5).
+> - ❌ Extensions/skillsets and custom/MCP agent usage — no signal in the API today.
+> - ⚠️ Group filtering requires AD groups to be synced to **GitHub Teams** via IdP team sync (org-level prerequisite) plus joining a separate `user-teams-1-day` report ourselves — GitHub does not provide one pre-built team-scoped endpoint.
 
 #### 6.2.1 Manager / Team Lead dashboard
 
@@ -90,25 +96,27 @@ Filters combine with AND logic across fields, OR logic within a field's multi-se
 - Saved views appear in a dropdown on every dashboard page and can be set as that user's default landing view.
 - Users can rename, update (overwrite with current filters), or delete their own saved views.
 
-#### 6.2.4 Feature, skill & agent usage
+#### 6.2.4 Model & feature usage
 
-- A dedicated view showing, per person (or rolled up per team/group via the standard filters), which Copilot surfaces they've used and how often over the selected window:
-  - Code completions (inline IDE suggestions)
-  - Copilot Chat (IDE, github.com, mobile, CLI)
-  - Code review / PR summaries
-  - Copilot coding agent (autonomous PR-opening agent)
-  - Extensions / skillsets (including custom, org-published ones)
-  - Custom / MCP-connected agents
-- Table shows: feature/skill/agent name, request count, last-used date, per the applied filters.
-- Drill-down from a team rollup to see which individuals are driving usage of a given feature.
+- Per-person (or rolled up per team/group via the standard filters), over the selected window:
+  - **Requests per LLM model** — hard data, sourced directly from the API's per-user model breakdown (e.g. "14 requests via `claude-sonnet-4.6`, 6 via `gpt-5.4`" for that day). This is the data the **LLM model filter** (§6.2.2) narrows.
+  - Code completions (inline IDE suggestions) — request count.
+  - Copilot Chat — request count.
+  - Copilot CLI activity — request count.
+  - Code review — used yes/no per person (org aggregates counts, not rich per-user detail).
+  - Copilot coding agent — used yes/no per person (the API exposes this as a flag, not a request count).
+- **Not available, not shown in v1:** Extensions/skillsets and custom/MCP-connected agent usage — GitHub's usage metrics API has no signal for these today. Revisit if/when GitHub adds it.
+- Drill-down from a team rollup to see which individuals are driving usage of a given model or feature.
 
 #### 6.2.5 Cost dashboard
 
 - Standalone dashboard showing Copilot charges for team members, using the same three filters (§6.2.2) and saved views (§6.2.3).
+- Data source: each user's daily `ai_credits_used` total — the most direct cost-like field the API exposes. Displayed as credits and, optionally, an equivalent dollar figure (credits × $0.01 list rate). **Not** broken down by model — see §6.2 API validation note.
 - Top level: cost per team/group over the selected window, with a trend chart.
-- **Drill-down path:** team/group total → individual team members → that individual's cost broken down by model → (where available) by feature/agent.
+- **Drill-down path:** team/group total → individual team members → that individual's daily/period total. Drill-down stops there; there is no per-model or per-feature cost split (decided 2026-07-17 — not estimating it).
+- The **LLM model filter** narrows *which users* appear (those with activity on that model, per §6.2.4's request-count data) but does not split any individual's cost number by model.
 - CSV export at any drill-down level.
-- Cost figures reconcile between this dashboard and the per-user detail in §6.2.1/§6.2.4 — same underlying data, different entry points.
+- Labelled in the UI as a usage-based cost **signal**, not an invoice-grade figure — matches GitHub's own caveat on `ai_credits_used`. Finance should reconcile against GitHub Billing for actual invoicing.
 
 ### 6.3 Audit log
 
@@ -136,6 +144,7 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 
 - **Availability:** 99.5% during business hours.
 - **Performance:** dashboards render < 2s at p95 for the target scale, including daily-granularity queries over a 90-day window.
+- **Data freshness:** usage data reflects GitHub's own reporting lag — typically available ~2 days after a given day closes. Dashboards should surface the "as of" date so this isn't mistaken for real-time.
 - **Security:** SSO-only sign-in, TLS 1.2+, encryption at rest, secrets in a managed vault, least-privilege GitHub token scoped to read-only Copilot usage/metrics APIs (no admin/write scope needed until §6.5 ships).
 - **Compliance:** SOC 2 Common Criteria alignment for access management (CC6). Audit log designed to be evidence for CC6.1, CC6.2, CC6.3.
 - **Data minimization:** the system stores identity, usage aggregates, and cost data — not the content of prompts, suggestions, or code.
@@ -192,12 +201,13 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 
 ## 11. Open questions
 
-1. **API granularity (critical).** Does GitHub's Copilot usage/metrics API expose daily, per-user data broken down by model and by feature/agent (chat, coding agent, extensions, custom/MCP agents)? This is a hard dependency for §6.2.4 and the model/feature portions of §6.2.5 — needs validation against the GitHub Enterprise Cloud Copilot Metrics API before Phase 1 is scoped in detail.
-2. **Cost source.** Is per-model cost derived from GitHub's premium-request multipliers, or a separate billing export? Affects how §6.2.5 sources its numbers.
+1. ~~**API granularity.**~~ **Resolved 2026-07-17** — see the API validation note in §6.2. Per-model request counts: real. Per-user total credits: real. Per-model credits, extensions/agent usage: not available; not being estimated.
+2. ~~**Cost source.**~~ **Resolved 2026-07-17** — §6.2.5 uses `ai_credits_used` (the API's per-user daily total), labeled as a usage signal, not an invoice-grade figure.
 3. **Manager attribute.** Does our IdP reliably populate the manager field for every employee? If not, we need a fallback (team-owner mapping) for dashboard scoping.
-4. **AD group depth.** How many levels of AD/IdP groups do we need to support for filtering (just team/department, or arbitrary nested org units)?
+4. **AD group depth & GitHub Team sync readiness.** How many levels of AD/IdP groups need to map to GitHub Teams for §6.2.2's Group filter, and has GitHub Team IdP-sync already been set up for the org, or does that need to happen before Phase 1 can ship the Group filter?
 5. **Saved-view sharing scope.** Should "shared with my team" saved views be visible to any manager in the org, or only to managers with overlapping report scope?
 6. **Seat management timing.** Any hard deadline (e.g. cost overrun, audit finding) that would pull Phase 2 forward?
+7. **Coding-agent/CLI model attribution.** Confirm during implementation whether the per-model request-count breakdown (§6.2.4) covers coding agent and CLI activity, or only chat — the researched docs were explicit about chat but ambiguous on the others.
 
 ## 12. Out of scope (not planned)
 
