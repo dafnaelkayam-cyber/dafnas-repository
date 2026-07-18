@@ -2,7 +2,7 @@
 
 **Owner:** Dafna Elkayam
 **Status:** Draft v1
-**Last updated:** 2026-07-18 (rev 6 — aligned to wireframe: Home, My Usage, Compare Users, My Teams, Department)
+**Last updated:** 2026-07-18 (rev 7 — manager/FinOps stress test: non-users, overage pace, premium-model %, Phase 2 usage alerts)
 
 ---
 
@@ -24,6 +24,7 @@ A custom in-house web application that gives engineering managers daily visibili
 - Let managers **compare specific people side-by-side** and **group people into their own teams** without depending on GitHub/AD sync.
 - Give managers a **department-level rollup** across their full reporting line.
 - Show managers **which features and models** their team members are actually using, and their **credit spend**.
+- **Proactively alert managers** to non-users, credit-overage risk, and heavy premium-model usage — not just leave it to a dashboard someone has to remember to check.
 - Enforce SSO for all access to the tool.
 
 ### Non-goals (v1)
@@ -74,6 +75,11 @@ A custom in-house web application that gives engineering managers daily visibili
 > - ❌ Per-user, per-model **credits/cost** — does not exist in the API, and not being estimated (decided 2026-07-17). Every screen below shows model **request counts** as hard data and credits as an **unsplit total** — never "N credits on model X."
 > - ❌ Extensions/skillsets and custom/MCP agent usage — no signal in the API today.
 > - Team and Department aggregates require **no additional GitHub API access** — they're computed by our own backend summing per-user data across a team's stored member list (self-created, §6.1), not by calling any GitHub team-scoped endpoint.
+>
+> **Derived metrics (computed by us, not returned by the API):**
+> - **Non-user flag** — zero activity across the selected window. Distinct from GitHub's `ai_adoption_phase` "at-risk" cohort (which is a blended, opaque classification) — this is a plain, explainable "0 active days" count.
+> - **Overage pace** — projected end-of-cycle credit usage = credits used so far ÷ days elapsed in the current cycle × total days in the cycle, flagged when the projection exceeds the user's allowance. Pure arithmetic on data we already ingest (`ai_credits_used` + known cycle boundaries).
+> - **Premium-model %** — share of a user's requests that fall on a "premium" model tier. Requires us to **maintain our own model → cost-tier mapping** (GitHub's API returns a model name, e.g. `claude-sonnet-4.6`, not a tier) — an ongoing maintenance item as GitHub adds or re-prices models, not a one-time build.
 
 #### 6.2.0 First MVP — daily use & cost signal
 
@@ -102,7 +108,7 @@ Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (D
 - **Sign in:** SSO only. Copy communicates that "access is scoped to your reporting line automatically" — sets expectations before the user even lands.
 - **Home** is the landing page after every sign-in. Contents:
   - Global search box — search by user, team, or department name (scope per §6.1).
-  - Summary tiles: employee count, team count, and an **at-risk count** (visually flagged, e.g. red) — a headline surfacing of the `ai_adoption_phase` "at-risk" cohort, not buried in a detail view.
+  - Summary tiles: employee count, team count, an **at-risk count** (`ai_adoption_phase` cohort), a **non-users count** (zero activity in window — see the derived-metrics note above), and a **trending-toward-overage count** (overage pace) — all headline numbers, not buried in a detail view.
   - **Recently viewed** — last few users/teams the manager looked at, mixed entity types, click-through. This replaces the previously-planned "saved filter views" feature — automatic and zero-effort instead of user-maintained (see [open question 5](#11-open-questions) on whether manual saving is still wanted later).
   - **"Your credits this cycle"** — the *signed-in manager's own* credit usage (used / left / days to reset), since managers use Copilot too. New addition versus earlier drafts, which only covered viewing *others'* usage.
   - Empty search → empty state (§6.2.7).
@@ -115,14 +121,14 @@ Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (D
   - Adoption phase badge (engaged / new / at-risk — display labels; confirm exact mapping to GitHub's `ai_adoption_phase` values during implementation, [open question 7](#11-open-questions)).
   - **Daily activity** — a chart of active/inactive per day.
   - **Features** — checklist: Completions, Chat, Code review, CLI, Coding agent (✓ / — per the `used_*` API flags).
-  - **Model mix** — list of request counts per model (e.g. "sonnet-4.6 — 14 req", "gpt-5.4 — 6 req"), from `totals_by_model[]`.
-  - **AI credits** — daily & 28-day trend chart, plus "% used · N credits left · resets in N days" against the org's monthly allowance.
+  - **Model mix** — list of request counts per model (e.g. "sonnet-4.6 — 14 req", "gpt-5.4 — 6 req"), from `totals_by_model[]`, plus **premium-model %** (share of requests on a premium-tier model — derived metric above).
+  - **AI credits** — daily & 28-day trend chart, plus "% used · N credits left · resets in N days" against the org's monthly allowance, plus a **pace indicator** ("on track" / "trending over allowance" — derived metric above).
 - Reachable from Home search, Compare Users (row click), or a Team view's member list.
 
 #### 6.2.4 Compare Users
 
 - A table for putting a handful of specific people side by side. Add people via search-and-add chips (any combination of direct/indirect reports or team members, per §6.1's scope rule).
-- Columns: **Adoption**, **Active days (7)**, **Model mix**, **Credits (7d)**, **Left till cycle end**.
+- Columns: **Adoption**, **Active days (7)**, **Model mix**, **Premium-model %**, **Credits (7d)**, **Left till cycle end**, **Pace** (on track / trending over).
 - Row names link to that person's My Usage (§6.2.3).
 - No saved/named comparisons in v1 — the comparison is session-scoped (add/remove chips); persisting a comparison is a possible later enhancement.
 
@@ -132,6 +138,7 @@ Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (D
 - **Create team:** name the team, then search-and-add members (chips). Save returns to My Teams.
 - **Team view:** aggregate stats for the selected date range —
   - Team active rate (%), total credits used/left, adoption ratio (e.g. "4/6 engaged").
+  - **Non-users** (e.g. "1/6 non-users this window") and **trending-toward-overage** (e.g. "2/6 trending over allowance") counts — same derived metrics as Home, rolled up to team level.
   - **Active members per day** — bar chart.
   - **Feature usage across team** — fraction of members who used each feature (e.g. "Completions: 6/6 · Chat: 5/6").
   - **Model mix (team total)** — aggregated request counts per model.
@@ -142,7 +149,7 @@ Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (D
 #### 6.2.6 Department (manager rollup)
 
 - Manager-only tab (hidden entirely for individual contributors). Lists every team belonging to anyone in the signed-in manager's full reporting line — automatic, not manually curated, not a separately synced entity (§6.1).
-- Table: Team, Members, Active rate, Credits used/left, and a "drill in" link into that team's Team view (§6.2.5).
+- Table: Team, Members, Active rate, Non-users, Trending-toward-overage, Credits used/left, and a "drill in" link into that team's Team view (§6.2.5).
 - **Open:** should a manager be able to manually add/exclude a team from their Department view, for cases where real department boundaries don't perfectly match the reporting line? ([open question 9](#11-open-questions))
 
 #### 6.2.7 Empty / no-results search state
@@ -156,10 +163,16 @@ Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (D
 - Retention: 7 years.
 - Filterable UI + CSV export for auditors.
 
-### 6.4 Notifications (v1 — minimal)
+### 6.4 Notifications & alerts
 
 - **Email only.**
-- v1 scope is limited to account/access notifications (e.g. role changed, added to a team). Usage-workflow notifications (approval digests, idle-seat summaries) are deferred along with seat management (§6.5).
+- **Account/access notifications** (Phase 1): role changed, added to a team.
+- **Usage alerts (Phase 2):** a weekly email per manager, scoped to their reporting line, summarizing the derived metrics from §6.2:
+  - Non-users this week (who, and how many days since last activity).
+  - Members trending toward credit overage (pace flag).
+  - Heavy users — members whose request volume or premium-model % crosses a threshold (see [open question 11](#11-open-questions) on how "heavy" is defined).
+  - Ships alongside Compare/Teams in Phase 2 since it's computed entirely from Phase 1 data — no new ingestion needed.
+- Other usage-workflow notifications (approval digests, idle-seat summaries) remain deferred along with seat management (§6.5) until Phase 4.
 
 ### 6.5 Seat management (deferred)
 
@@ -197,6 +210,9 @@ Note: AD-group/GitHub-Team sync is **not** an integration this tool depends on f
 - **Team creation:** % of managers who create at least one team, within 4 weeks of launch.
 - **At-risk follow-up:** % of users flagged "at-risk" who move to a healthier adoption phase within 30 days of their manager viewing them.
 - **Compare usage:** % of manager sessions that use Compare Users at least once.
+- **Non-user reduction:** % decrease in the org-wide non-users count within 60 days of the weekly alert email launching.
+- **Overage prevention:** % of users flagged "trending toward overage" who finish the cycle under their allowance.
+- **Alert engagement:** % of managers who open the weekly usage alert email.
 - **Auditor readiness:** SOC 2 access-management evidence generated in < 1 hour.
 
 ## 10. Recommended phasing
@@ -205,24 +221,26 @@ Note: AD-group/GitHub-Team sync is **not** an integration this tool depends on f
 
 - SSO sign-in + SCIM sync (users, managers).
 - Daily usage ingestion from GitHub's Copilot usage/metrics API.
-- Sign in, Home (search, tiles, recently viewed, own-credits widget), My Usage (single-user drill-down), empty search state — wireframe screens 1, 2, 3, 9.
+- Sign in, Home (search, tiles including non-users and trending-toward-overage counts, recently viewed, own-credits widget), My Usage (single-user drill-down, including pace indicator and premium-model %), empty search state — wireframe screens 1, 2, 3, 9.
+- Model → cost-tier mapping (initial version) to support premium-model %.
 - Basic audit log (access events).
 
 **Exit criteria:** see §6.2.0.
 
-### Phase 2 — Compare & self-service Teams
+### Phase 2 — Compare, self-service Teams & usage alerts
 
-- Compare Users (screen 4).
-- My Teams list, Create team, Team view (screens 5, 6, 7).
-- No external dependency — teams and comparisons are computed entirely from data already ingested in Phase 1.
+- Compare Users (screen 4), with Premium-model % and Pace columns.
+- My Teams list, Create team, Team view (screens 5, 6, 7), including team-level non-users and trending-toward-overage counts.
+- **Weekly usage alert email** per manager (§6.4) — non-users, overage-pace flags, heavy/premium-model users.
+- No external dependency — teams, comparisons, and alerts are all computed entirely from data already ingested in Phase 1.
 
-**Exit criteria:** a manager can compare any set of their people side by side, and create a team to see its aggregate stats and member table.
+**Exit criteria:** a manager can compare any set of their people side by side, create a team to see its aggregate stats and member table, and receives a weekly email flagging non-users, overage risk, and heavy premium-model usage across their scope.
 
 ### Phase 3 — Department rollup
 
-- Department view (screen 8), built on Phase 2's team data plus the manager's full reporting-line hierarchy.
+- Department view (screen 8), built on Phase 2's team data plus the manager's full reporting-line hierarchy, including department-level non-users and trending-toward-overage counts.
 
-**Exit criteria:** a manager with reports who themselves manage teams can see every team under them in one rollup and drill into any of them.
+**Exit criteria:** a manager with reports who themselves manage teams can see every team under them in one rollup, including non-user and overage-risk counts per team, and drill into any of them.
 
 ### Phase 4 — Seat Management (deferred scope)
 
@@ -235,7 +253,7 @@ Note: AD-group/GitHub-Team sync is **not** an integration this tool depends on f
 
 ### Phase 5 — Governance & Scale
 
-- Weekly digests (usage summaries, idle seats, approvals).
+- Additional digest types once seat management exists (idle-seat summaries, approval queues) — the core usage alert email already ships in Phase 2.
 - Historical trend views (12-month).
 - SOC 2 evidence-pack export.
 - Finance-facing cost view (pending [open question 8](#11-open-questions)).
@@ -256,6 +274,9 @@ Note: AD-group/GitHub-Team sync is **not** an integration this tool depends on f
 8. **Finance persona UI.** The wireframe is entirely manager-facing. What does finance actually need — a cut-down Team/Department view with names hidden, a separate export, or something else?
 9. **Department curation.** Should a manager be able to manually add/exclude a team from their Department rollup, for cases where the real department doesn't perfectly match the reporting line?
 10. **Seat management timing.** Any hard deadline (e.g. cost overrun, audit finding) that would pull Phase 4 forward?
+11. **"Heavy user" / premium-model threshold.** Is this a fixed absolute threshold (e.g. > N requests/day, > X% premium-model requests), a relative one (e.g. top 10% of the team), or manager-configurable? Needs a decision before the Phase 2 alert email ships.
+12. **Model cost-tier mapping ownership.** Who maintains the model → tier table as GitHub adds or re-prices models — is this a manual admin task, or should it be reviewed on a schedule (e.g. monthly)?
+13. **Alert cadence.** Is weekly the right frequency for the Phase 2 usage alert, or do managers want something closer to real-time for overage risk specifically?
 
 ## 12. Out of scope (not planned)
 
