@@ -2,28 +2,28 @@
 
 **Owner:** Dafna Elkayam
 **Status:** Draft v1
-**Last updated:** 2026-07-17 (rev 5 — first MVP defined: per-user daily use + cost signal, filter by User only)
+**Last updated:** 2026-07-18 (rev 6 — aligned to wireframe: Home, My Usage, Compare Users, My Teams, Department)
 
 ---
 
 ## 1. Summary
 
-A custom in-house web application that gives engineering managers and finance daily visibility into how the organization's GitHub Copilot seats are actually used — per user, per LLM model, per feature/skill/agent, and per dollar — with saved, reusable filters and cost drill-down. Seat provisioning and reclamation workflows are a real need but are **deferred to a later phase**; v1 focuses entirely on usage and cost visibility for seats that already exist.
+A custom in-house web application that gives engineering managers daily visibility into how their team actually uses GitHub Copilot — per person, per LLM model, and per credit — through five screens: a **Home** landing page, a **My Usage** single-person drill-down, a **Compare Users** side-by-side table, self-service **My Teams**, and a manager-only **Department** rollup. Seat provisioning and reclamation workflows are a real need but are **deferred to a later phase**; v1 focuses entirely on usage and cost visibility for seats that already exist.
 
 ## 2. Problem
 
-1. **No usage visibility.** Managers have no way to see, day by day, whether their team is actually using Copilot, which models they're using, or which features (chat, code review, coding agent, extensions/skills) are getting adopted.
-2. **No cost accountability.** Finance and managers cannot see what each team member is costing in Copilot usage, let alone drill from a team total down to an individual and their model mix.
-3. **No repeatable analysis.** Managers re-build the same filter combinations (their team, a specific model, a specific person) every time they check in — there's no way to save and reuse a view.
+1. **No usage visibility.** Managers have no way to see, day by day, whether their team is actually using Copilot, which models they're using, or which features (chat, code review, coding agent) are getting adopted.
+2. **No cost accountability.** Managers cannot see what each team member is costing in Copilot credits, or roll that up to a team/department total.
+3. **No easy way to compare or group people.** Checking on a handful of specific people, or a whole team, means looking them up one at a time — there's no comparison view and no lightweight way to group people who don't map cleanly to GitHub's org structure.
 
 ## 3. Goals & Non-goals
 
 ### Goals
 
-- Give every team lead a **daily**, per-user view of Copilot usage for their team.
-- Let team leads **save filter combinations** (users, group, LLM model) and reuse them.
-- Show managers **which features, skills, and agents** their team members are actually using.
-- Give managers and finance a **cost dashboard** with drill-down from team → individual → model/feature.
+- Give every manager a **daily**, per-user view of Copilot usage for their reports.
+- Let managers **compare specific people side-by-side** and **group people into their own teams** without depending on GitHub/AD sync.
+- Give managers a **department-level rollup** across their full reporting line.
+- Show managers **which features and models** their team members are actually using, and their **credit spend**.
 - Enforce SSO for all access to the tool.
 
 ### Non-goals (v1)
@@ -33,19 +33,21 @@ A custom in-house web application that gives engineering managers and finance da
 - Managing non-Copilot GitHub entitlements (repos, teams, Actions minutes).
 - Managing usage for non-GitHub IDEs or third-party AI coding tools.
 - Real-time coaching / prompt-quality analytics for individual developers.
+- Syncing teams from Active Directory/GitHub Teams — teams are **self-created** in this app (see §6.1).
 
 ## 4. Users & personas
 
 | Persona | Primary needs |
 |---|---|
-| **Engineering manager / team lead** | Daily usage per person on their team; which models, features, skills, and agents are used; cost drill-down; saved filters for repeat checks. |
-| **Finance / procurement** | Team-level cost dashboard with drill-down; no per-user activity detail beyond cost. |
+| **Engineering manager / team lead** | Daily usage per direct/indirect report; compare specific people; group people into self-created teams; department rollup; credit spend per person/team. |
+| **Individual contributor** | Sign in and see their **own** usage and credit spend only — no visibility into anyone else (see §6.1 access model). |
 | **IT / GitHub admin** | Org-wide (unscoped) version of every view above; audit log; SCIM/SSO configuration. |
+| **Finance / procurement** | Cost visibility, most likely team/department-level — **UI not yet designed**, see [open question 8](#11-open-questions). |
 
 ## 5. Scope & scale
 
 - **Seat count:** 100–1,000 active Copilot seats (seats themselves are provisioned outside this tool in v1 — see §6.5).
-- **Users of the tool:** ~50–200 (managers, IT admins, finance).
+- **Users of the tool:** ~50–200 (managers, individual contributors, IT admins).
 - **GitHub orgs supported:** single org in v1, multi-org in a later phase.
 
 ## 6. Functional requirements
@@ -56,101 +58,108 @@ A custom in-house web application that gives engineering managers and finance da
 - SAML 2.0 SSO for all sign-in. No local passwords.
 - Role model:
   - **Admin** (IT/GitHub admin) — full access, org-wide, unscoped.
-  - **Manager** (team lead) — access scoped to their reports (derived from IdP manager attribute) and any teams they explicitly own.
-  - **Finance viewer** — cost dashboard only, team-level aggregates, no per-user usage/feature detail.
+  - **Manager** — anyone with ≥1 direct report per the IdP. Scoped to their full reporting line (direct + indirect) plus any teams they've personally created.
+  - **Individual contributor** — anyone with 0 direct reports. Sees only their own usage; **My Usage** shows just themselves (no report list); **Compare Users**, **My Teams**, and **Department** are hidden or empty.
 - Manager-to-report mapping comes from the IdP; the system does not maintain its own org chart.
-- Group sync: for the **Group filter** (§6.2.2) to work against Copilot usage data, the relevant AD security groups must be synced to **GitHub Teams** via IdP team sync (a separate, org-level GitHub Enterprise feature — up to 5 IdP groups per team, one-way from the IdP, hourly refresh). This is a setup prerequisite, not something this tool configures. Our backend joins GitHub's `user-teams-1-day` report against the per-user usage report to resolve team/group membership per day, since GitHub does not provide a single pre-aggregated team-scoped usage endpoint.
+- **Search/comparison scope:** a manager can search for, view, or add to Compare **anyone in their reporting line (any depth) or anyone in a team they've created** — matching the wireframe's stated MVP scoping rule.
+- **Teams are self-created, not synced.** A manager builds a team by naming it and picking members from search (§6.2.5) — entirely inside this app's own data model. **No AD-group or GitHub-Team sync is required for v1** (a change from earlier drafts of this PRD, which assumed AD→GitHub-Team sync was a prerequisite for any grouping/filtering feature — the wireframe replaces that with self-service teams, removing that dependency from the critical path). AD-group import into Teams is a possible later convenience (§10, Phase 5), not a blocker.
+- **Department** is not a separately synced entity — it's an automatic, read-only rollup of every team belonging to anyone in the signed-in manager's reporting line (§6.2.6). This is how the original "filter by group connected to org structure" requirement is satisfied, using data already available from SCIM.
 
-### 6.2 Usage & cost dashboards (core of v1)
+### 6.2 Usage dashboards (core of v1)
 
-> **API validation (done — 2026-07-17):** confirmed against GitHub's current Copilot usage metrics API (`users-1-day` / `users-28-day` reports).
+> **API validation (2026-07-17):** confirmed against GitHub's current Copilot usage metrics API (`users-1-day` / `users-28-day` reports).
 > - ✅ Daily, per-user data — real, ~2-day reporting lag after a day closes.
-> - ✅ Per-user, per-model **request counts** — real (`totals_by_model[]` breakdown, confirmed for chat; coding agent/CLI model attribution to be confirmed during implementation).
+> - ✅ Per-user, per-model **request counts** — real (`totals_by_model[]` breakdown, confirmed for chat; coding agent/CLI model attribution to be confirmed during implementation — see [open question 7](#11-open-questions)).
 > - ✅ Per-user **total** AI credits (`ai_credits_used`) — real, but a single daily total, **not** split by model. GitHub's own docs label it "a metrics signal for analyzing consumption, not a billed total."
-> - ❌ Per-user, per-model **credits/cost** — does not exist in the API. Not being estimated (decided 2026-07-17) — the cost dashboard uses the per-user total instead (§6.2.5).
+> - ❌ Per-user, per-model **credits/cost** — does not exist in the API, and not being estimated (decided 2026-07-17). Every screen below shows model **request counts** as hard data and credits as an **unsplit total** — never "N credits on model X."
 > - ❌ Extensions/skillsets and custom/MCP agent usage — no signal in the API today.
-> - ⚠️ Group filtering requires AD groups to be synced to **GitHub Teams** via IdP team sync (org-level prerequisite) plus joining a separate `user-teams-1-day` report ourselves — GitHub does not provide one pre-built team-scoped endpoint.
+> - Team and Department aggregates require **no additional GitHub API access** — they're computed by our own backend summing per-user data across a team's stored member list (self-created, §6.1), not by calling any GitHub team-scoped endpoint.
 
 #### 6.2.0 First MVP — daily use & cost signal
 
-The very first release ships the smallest useful slice: enough for a manager to answer "is this person using Copilot every day, and is their spend under control" — one user at a time.
+The very first release ships the smallest useful slice: enough for a manager to answer "is this person using Copilot every day, and is their spend under control" — one user at a time. It corresponds to wireframe screens **1 (Sign in), 2 (Home), 3 (My Usage), and 9 (empty search state)**.
 
-**Daily-use metrics per user:**
-- Active / inactive per day — presence in the API's daily per-user report, no extra computation needed.
-- Adoption phase (`ai_adoption_phase`) — GitHub's own cohort classification (e.g. new / engaged / at-risk), surfaced as-is instead of building custom thresholds.
-- Feature-used flags per day: completions, chat, CLI, coding agent, code review (`used_*` fields).
+**Exit criteria:** a manager can sign in, search for any one of their reports, and see for a selected date range: active/inactive per day, adoption phase, which features they used, their credit trend, and their model mix.
 
-**Cost metrics per user:**
-- Daily and 28-day-rolling `ai_credits_used` total, trended over time.
-- Model mix: request count per LLM model (`totals_by_model[]`) — a cost-coaching signal (frontier models cost more per request) even without exact per-model dollars.
-- Trend against the org's monthly AI-credit allowance, to flag a user approaching their cap before overage.
+#### 6.2.1 Screen inventory & navigation
 
-**Filter:** **User only** in this first release — type-ahead search, one or more users, scoped to the manager's own reports (admins unscoped). Group and LLM-model filters, saved views, and the cost drill-down dashboard (§6.2.1–§6.2.5 below) follow once this ships. Decoupling Group filtering from the MVP also avoids the GitHub Team/IdP-sync prerequisite blocking the first release.
+Left-rail global nav: **Home, My Usage, Compare Users, My Teams, Department** (Department hidden for individual contributors). Screen numbers below match the wireframe.
 
-**Exit criteria:** a manager can search for any one of their reports and see, for a selected date range: active/inactive per day, adoption phase, which features they used, their credit trend, and their model mix.
+| # | Screen | Phase |
+|---|---|---|
+| 1 | Sign in | 1 |
+| 2 | Home | 1 |
+| 3 | My Usage (single-user detail) | 1 |
+| 9 | Empty / no-results search state | 1 |
+| 4 | Compare Users | 2 |
+| 5 | My Teams (list) | 2 |
+| 6 | Create team | 2 |
+| 7 | Team view (aggregate + members) | 2 |
+| 8 | Department (manager rollup) | 3 |
 
----
+#### 6.2.2 Sign in & Home
 
-The rest of §6.2 describes the fuller dashboard this MVP grows into (team rosters, Group/LLM-model filters, saved views, drill-down cost view) — see phasing in §10.
+- **Sign in:** SSO only. Copy communicates that "access is scoped to your reporting line automatically" — sets expectations before the user even lands.
+- **Home** is the landing page after every sign-in. Contents:
+  - Global search box — search by user, team, or department name (scope per §6.1).
+  - Summary tiles: employee count, team count, and an **at-risk count** (visually flagged, e.g. red) — a headline surfacing of the `ai_adoption_phase` "at-risk" cohort, not buried in a detail view.
+  - **Recently viewed** — last few users/teams the manager looked at, mixed entity types, click-through. This replaces the previously-planned "saved filter views" feature — automatic and zero-effort instead of user-maintained (see [open question 5](#11-open-questions) on whether manual saving is still wanted later).
+  - **"Your credits this cycle"** — the *signed-in manager's own* credit usage (used / left / days to reset), since managers use Copilot too. New addition versus earlier drafts, which only covered viewing *others'* usage.
+  - Empty search → empty state (§6.2.7).
+  - Hidden/empty for individual contributors: employee/team/at-risk tiles (not meaningful with zero reports); their own credits widget still shows.
 
-#### 6.2.1 Manager / Team Lead dashboard
+#### 6.2.3 My Usage (single-user detail)
 
-- Landing view scoped automatically to the signed-in manager's reports (direct + indirect, from the IdP org chart) plus any teams they explicitly own.
-- Team roster table: one row per person, with **daily usage** (not just weekly/monthly rollups) — active/inactive per day, requests, model(s) used, cost for the day.
-- Date range picker (default: last 7 days, daily granularity) sitting alongside the roster.
-- Drill-down from any roster row into that person's full usage detail.
-- Same dashboard shell serves IT admins (org-wide, unscoped) and finance (cost view only, no per-user activity detail — see §6.1).
+- Left rail: searchable list of "My Reports" (the manager's direct reports, expandable to indirect reports via search). For an individual contributor, this rail is absent — the panel always shows their own data.
+- Right detail panel, for a selected date range (default last 7 days):
+  - Adoption phase badge (engaged / new / at-risk — display labels; confirm exact mapping to GitHub's `ai_adoption_phase` values during implementation, [open question 7](#11-open-questions)).
+  - **Daily activity** — a chart of active/inactive per day.
+  - **Features** — checklist: Completions, Chat, Code review, CLI, Coding agent (✓ / — per the `used_*` API flags).
+  - **Model mix** — list of request counts per model (e.g. "sonnet-4.6 — 14 req", "gpt-5.4 — 6 req"), from `totals_by_model[]`.
+  - **AI credits** — daily & 28-day trend chart, plus "% used · N credits left · resets in N days" against the org's monthly allowance.
+- Reachable from Home search, Compare Users (row click), or a Team view's member list.
 
-#### 6.2.2 Filters
+#### 6.2.4 Compare Users
 
-Exactly three filter fields, available on every dashboard/table view:
+- A table for putting a handful of specific people side by side. Add people via search-and-add chips (any combination of direct/indirect reports or team members, per §6.1's scope rule).
+- Columns: **Adoption**, **Active days (7)**, **Model mix**, **Credits (7d)**, **Left till cycle end**.
+- Row names link to that person's My Usage (§6.2.3).
+- No saved/named comparisons in v1 — the comparison is session-scoped (add/remove chips); persisting a comparison is a possible later enhancement.
 
-- **Users** — one or more individuals (typed search / multi-select). Managers are restricted to users within their own scope; admins can filter across the org.
-- **Group** — one or more AD/IdP-synced groups (§6.1), e.g. department, team, cost center.
-- **LLM model** — one or more models available in Copilot's model picker (e.g. GPT-4.1, Claude Sonnet, Gemini, o-series).
+#### 6.2.5 My Teams (list, create, team view)
 
-Filters combine with AND logic across fields, OR logic within a field's multi-select (e.g. "Group = Platform Team AND Model = Claude Sonnet OR Model = GPT-4.1").
+- **My Teams (list):** teams the signed-in manager has personally created, each showing a member count. "+ New team" opens Create team. Clicking a team opens Team view.
+- **Create team:** name the team, then search-and-add members (chips). Save returns to My Teams.
+- **Team view:** aggregate stats for the selected date range —
+  - Team active rate (%), total credits used/left, adoption ratio (e.g. "4/6 engaged").
+  - **Active members per day** — bar chart.
+  - **Feature usage across team** — fraction of members who used each feature (e.g. "Completions: 6/6 · Chat: 5/6").
+  - **Model mix (team total)** — aggregated request counts per model.
+  - **Members table** — same columns as Compare Users (§6.2.4); names link to My Usage.
+- All team aggregates are computed by our backend from stored team membership + each member's usage data — no external team-sync dependency (§6.1).
+- **Open:** whether a team is private to its creator or can be shared/co-owned by another manager — not shown in the wireframe ([open question 6](#11-open-questions)).
 
-#### 6.2.3 Saved filters
+#### 6.2.6 Department (manager rollup)
 
-- Any team lead (or admin) can save the current filter combination as a **named view** (e.g. "My team — Claude only").
-- Saved views are private to the user who created them by default; a "shared with my team" option makes a view visible to other managers with overlapping scope.
-- Saved views appear in a dropdown on every dashboard page and can be set as that user's default landing view.
-- Users can rename, update (overwrite with current filters), or delete their own saved views.
+- Manager-only tab (hidden entirely for individual contributors). Lists every team belonging to anyone in the signed-in manager's full reporting line — automatic, not manually curated, not a separately synced entity (§6.1).
+- Table: Team, Members, Active rate, Credits used/left, and a "drill in" link into that team's Team view (§6.2.5).
+- **Open:** should a manager be able to manually add/exclude a team from their Department view, for cases where real department boundaries don't perfectly match the reporting line? ([open question 9](#11-open-questions))
 
-#### 6.2.4 Model & feature usage
+#### 6.2.7 Empty / no-results search state
 
-- Per-person (or rolled up per team/group via the standard filters), over the selected window:
-  - **Requests per LLM model** — hard data, sourced directly from the API's per-user model breakdown (e.g. "14 requests via `claude-sonnet-4.6`, 6 via `gpt-5.4`" for that day). This is the data the **LLM model filter** (§6.2.2) narrows.
-  - Code completions (inline IDE suggestions) — request count.
-  - Copilot Chat — request count.
-  - Copilot CLI activity — request count.
-  - Code review — used yes/no per person (org aggregates counts, not rich per-user detail).
-  - Copilot coding agent — used yes/no per person (the API exposes this as a flag, not a request count).
-- **Not available, not shown in v1:** Extensions/skillsets and custom/MCP-connected agent usage — GitHub's usage metrics API has no signal for these today. Revisit if/when GitHub adds it.
-- Drill-down from a team rollup to see which individuals are driving usage of a given model or feature.
-
-#### 6.2.5 Cost dashboard
-
-- Standalone dashboard showing Copilot charges for team members, using the same three filters (§6.2.2) and saved views (§6.2.3).
-- Data source: each user's daily `ai_credits_used` total — the most direct cost-like field the API exposes. Displayed as credits and, optionally, an equivalent dollar figure (credits × $0.01 list rate). **Not** broken down by model — see §6.2 API validation note.
-- Top level: cost per team/group over the selected window, with a trend chart.
-- **Drill-down path:** team/group total → individual team members → that individual's daily/period total. Drill-down stops there; there is no per-model or per-feature cost split (decided 2026-07-17 — not estimating it).
-- The **LLM model filter** narrows *which users* appear (those with activity on that model, per §6.2.4's request-count data) but does not split any individual's cost number by model.
-- CSV export at any drill-down level.
-- Labelled in the UI as a usage-based cost **signal**, not an invoice-grade figure — matches GitHub's own caveat on `ai_credits_used`. Finance should reconcile against GitHub Billing for actual invoicing.
+- Shown from the Home search box when a query matches nothing. Simple "No matches for '\<query\>'" state — no results list, no error.
 
 ### 6.3 Audit log
 
-- Immutable append-only log covering: sign-ins, dashboard/report access, saved-filter create/update/delete, role changes, SCIM sync changes, and (once §6.5 ships) seat lifecycle events.
-- Each entry records: timestamp (UTC), actor (SSO identity), action, target (user/view/role), before/after state where applicable.
+- Immutable append-only log covering: sign-ins, dashboard/report access, team create/update/delete/membership-change, role changes, SCIM sync changes, and (once §6.5 ships) seat lifecycle events.
+- Each entry records: timestamp (UTC), actor (SSO identity), action, target (user/team/role), before/after state where applicable.
 - Retention: 7 years.
 - Filterable UI + CSV export for auditors.
 
 ### 6.4 Notifications (v1 — minimal)
 
 - **Email only.**
-- v1 scope is limited to account/access notifications (e.g. role changed, saved view shared with you). Usage-workflow notifications (approval digests, idle-seat summaries) are deferred along with seat management (§6.5).
+- v1 scope is limited to account/access notifications (e.g. role changed, added to a team). Usage-workflow notifications (approval digests, idle-seat summaries) are deferred along with seat management (§6.5).
 
 ### 6.5 Seat management (deferred)
 
@@ -160,7 +169,7 @@ Out of scope for the current build, kept here so the requirements aren't lost:
 - **Idle-seat detection** (e.g. 30 days with zero activity) and admin-reviewed reclamation.
 - GitHub Copilot admin API integration to assign/revoke seats.
 
-This becomes Phase 2 (§10) once the usage/cost dashboards are live and validated.
+This becomes Phase 4 (§10) once the usage dashboards are live and validated.
 
 ## 7. Non-functional requirements
 
@@ -169,48 +178,53 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 - **Data freshness:** usage data reflects GitHub's own reporting lag — typically available ~2 days after a given day closes. Dashboards should surface the "as of" date so this isn't mistaken for real-time.
 - **Security:** SSO-only sign-in, TLS 1.2+, encryption at rest, secrets in a managed vault, least-privilege GitHub token scoped to read-only Copilot usage/metrics APIs (no admin/write scope needed until §6.5 ships).
 - **Compliance:** SOC 2 Common Criteria alignment for access management (CC6). Audit log designed to be evidence for CC6.1, CC6.2, CC6.3.
-- **Data minimization:** the system stores identity, usage aggregates, and cost data — not the content of prompts, suggestions, or code.
+- **Data minimization:** the system stores identity, usage aggregates, and credit data — not the content of prompts, suggestions, or code.
 
 ## 8. Integrations
 
 | System | Purpose | Direction |
 |---|---|---|
-| Corporate IdP (Okta / Entra ID / Google) | SSO + SCIM user/manager/group sync | Inbound |
-| GitHub Copilot usage / metrics API | Daily per-user activity, per-model, and per-feature/agent usage | Inbound |
+| Corporate IdP (Okta / Entra ID / Google) | SSO + SCIM user/manager sync | Inbound |
+| GitHub Copilot usage / metrics API | Daily per-user activity, per-model, and per-feature usage | Inbound |
 | Corporate SMTP / transactional email | Account-related notifications | Outbound |
 | GitHub Copilot admin API | Assign/revoke seats — **deferred**, needed only when §6.5 ships | Outbound (future) |
 
+Note: AD-group/GitHub-Team sync is **not** an integration this tool depends on for v1 — see §6.1.
+
 ## 9. Success metrics
 
-- **Manager adoption:** % of managers who view their team's usage dashboard at least weekly, within 6 weeks of launch.
-- **Saved-view usage:** % of managers with at least one saved filter view, within 4 weeks of launch.
-- **Cost visibility coverage:** 100% of Copilot spend attributable to a team/individual/model via the cost dashboard.
-- **Drill-down usage:** % of finance/manager sessions that use at least one drill-down level.
+- **Manager adoption:** % of managers who view their team's usage at least weekly, within 6 weeks of launch.
+- **Team creation:** % of managers who create at least one team, within 4 weeks of launch.
+- **At-risk follow-up:** % of users flagged "at-risk" who move to a healthier adoption phase within 30 days of their manager viewing them.
+- **Compare usage:** % of manager sessions that use Compare Users at least once.
 - **Auditor readiness:** SOC 2 access-management evidence generated in < 1 hour.
 
 ## 10. Recommended phasing
 
-### Phase 1 — First MVP: daily use & cost signal (§6.2.0)
+### Phase 1 — First MVP: daily use & cost signal
 
-- SSO sign-in + SCIM sync (users, managers — group sync not required yet).
+- SSO sign-in + SCIM sync (users, managers).
 - Daily usage ingestion from GitHub's Copilot usage/metrics API.
-- Per-user search + detail view: active/inactive per day, adoption phase, feature-used flags, credit trend, model mix.
-- Filter by **User** only.
+- Sign in, Home (search, tiles, recently viewed, own-credits widget), My Usage (single-user drill-down), empty search state — wireframe screens 1, 2, 3, 9.
 - Basic audit log (access events).
 
-**Exit criteria:** see §6.2.0's exit criteria — a manager can look up any one report and see their daily activity, adoption phase, feature usage, and cost/model trend.
+**Exit criteria:** see §6.2.0.
 
-### Phase 2 — Full usage & cost dashboards
+### Phase 2 — Compare & self-service Teams
 
-- Manager/Team Lead roster dashboard, team-wide (§6.2.1).
-- Group and LLM-model filters, saved filter views (§6.2.2, §6.2.3).
-- Model & feature usage rollups at team level (§6.2.4).
-- Cost dashboard with team → individual drill-down (§6.2.5).
-- Resolve the GitHub Team/IdP-sync prerequisite for Group filtering (§6.1) — an org-side dependency, flag early.
+- Compare Users (screen 4).
+- My Teams list, Create team, Team view (screens 5, 6, 7).
+- No external dependency — teams and comparisons are computed entirely from data already ingested in Phase 1.
 
-**Exit criteria:** a manager can open the tool, apply a saved filter, and see daily usage, feature adoption, and cost drill-down for their whole team without leaving the dashboard.
+**Exit criteria:** a manager can compare any set of their people side by side, and create a team to see its aggregate stats and member table.
 
-### Phase 3 — Seat Management (deferred scope)
+### Phase 3 — Department rollup
+
+- Department view (screen 8), built on Phase 2's team data plus the manager's full reporting-line hierarchy.
+
+**Exit criteria:** a manager with reports who themselves manage teams can see every team under them in one rollup and drill into any of them.
+
+### Phase 4 — Seat Management (deferred scope)
 
 - Self-service request form.
 - Two-step approval (manager → IT admin).
@@ -219,25 +233,29 @@ This becomes Phase 2 (§10) once the usage/cost dashboards are live and validate
 
 **Exit criteria:** every new Copilot seat in the org is granted through the tool; idle seats surface to admins.
 
-### Phase 4 — Governance & Scale
+### Phase 5 — Governance & Scale
 
 - Weekly digests (usage summaries, idle seats, approvals).
 - Historical trend views (12-month).
 - SOC 2 evidence-pack export.
-- Chargeback export into finance systems (ERP).
+- Finance-facing cost view (pending [open question 8](#11-open-questions)).
+- Optional: AD-group import as a convenience shortcut for populating Teams (not required — Teams already work without it).
 - Multi-org support.
 
 **Exit criteria:** SOC 2 auditor accepts the tool's log + evidence pack as the system-of-record for Copilot access and usage.
 
 ## 11. Open questions
 
-1. ~~**API granularity.**~~ **Resolved 2026-07-17** — see the API validation note in §6.2. Per-model request counts: real. Per-user total credits: real. Per-model credits, extensions/agent usage: not available; not being estimated.
-2. ~~**Cost source.**~~ **Resolved 2026-07-17** — §6.2.5 uses `ai_credits_used` (the API's per-user daily total), labeled as a usage signal, not an invoice-grade figure.
-3. **Manager attribute.** Does our IdP reliably populate the manager field for every employee? If not, we need a fallback (team-owner mapping) for dashboard scoping.
-4. **AD group depth & GitHub Team sync readiness.** How many levels of AD/IdP groups need to map to GitHub Teams for §6.2.2's Group filter, and has GitHub Team IdP-sync already been set up for the org, or does that need to happen before Phase 1 can ship the Group filter?
-5. **Saved-view sharing scope.** Should "shared with my team" saved views be visible to any manager in the org, or only to managers with overlapping report scope?
-6. **Seat management timing.** Any hard deadline (e.g. cost overrun, audit finding) that would pull Phase 2 forward?
-7. **Coding-agent/CLI model attribution.** Confirm during implementation whether the per-model request-count breakdown (§6.2.4) covers coding agent and CLI activity, or only chat — the researched docs were explicit about chat but ambiguous on the others.
+1. ~~**API granularity.**~~ **Resolved 2026-07-17** — per-model request counts real; per-user total credits real; per-model credits and extensions/agent usage not available, not estimated.
+2. ~~**Cost source.**~~ **Resolved 2026-07-17** — uses `ai_credits_used` (per-user daily total), labeled as a usage signal, not an invoice-grade figure.
+3. **Manager attribute.** Does our IdP reliably populate the manager field for every employee? If not, we need a fallback for who counts as a "manager" and what their reporting line is.
+4. ~~**AD group depth & GitHub Team sync readiness.**~~ **Resolved 2026-07-18** — moot; teams are self-created (§6.1), no AD/GitHub-Team sync required for v1.
+5. **Should comparisons or "views" be savable?** The wireframe shows only session-scoped Compare and automatic "Recently viewed," with no manual save feature. Confirm this is sufficient, or whether managers will want to name and persist a specific comparison/team view.
+6. **Team sharing/co-ownership.** Is a team private to its creator, or can it be shared with or co-owned by another manager? Not shown in the wireframe.
+7. **Coding-agent/CLI model attribution.** Confirm during implementation whether the per-model request-count breakdown covers coding agent and CLI activity, or only chat.
+8. **Finance persona UI.** The wireframe is entirely manager-facing. What does finance actually need — a cut-down Team/Department view with names hidden, a separate export, or something else?
+9. **Department curation.** Should a manager be able to manually add/exclude a team from their Department rollup, for cases where the real department doesn't perfectly match the reporting line?
+10. **Seat management timing.** Any hard deadline (e.g. cost overrun, audit finding) that would pull Phase 4 forward?
 
 ## 12. Out of scope (not planned)
 
